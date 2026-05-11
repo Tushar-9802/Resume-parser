@@ -1,0 +1,88 @@
+# Heading aliases for the semantic section splitter.
+# Word-boundary matching ONLY — substring matching causes false hits
+# (e.g., "objective" inside "object oriented", "summary" inside "course summary").
+# Order matters within a category: more specific phrases first.
+
+contact:
+  - contact information
+  - contact details
+  - contact info
+  - contact
+  - personal details
+  - personal information
+
+summary:
+  - professional summary
+  - executive summary
+  - career objective
+  - career summary
+  - profile summary
+  - summary
+  - profile
+  - objective
+  - about me
+  - about
+
+experience:
+  - work experience
+  - professional experience
+  - employment history
+  - employment
+  - work history
+  - career history
+  - experience
+  - career
+
+education:
+  - educational qualifications
+  - academic qualifications
+  - academic background
+  - education
+  - qualifications
+  - academics
+
+skills:
+  - technical skills
+  - core competencies
+  - technical proficiencies
+  - key skills
+  - technologies
+  - tech stack
+  - skills
+  - expertise
+  - competencies
+
+projects:
+  - personal projects
+  - side projects
+  - notable projects
+  - key projects
+  - academic projects
+  - projects
+
+certifications:
+  - certifications and courses
+  - certifications
+  - certificates
+  - licenses
+  - licences
+  - courses
+
+achievements:
+  - awards and achievements
+  - achievements
+  - awards
+  - accomplishments
+  - honors
+
+languages:
+  - languages known
+  - languages
+
+publications:
+  - publications
+  - research publications
+
+interests:
+  - interests
+  - hobbies

@@ -1,0 +1,94 @@
+# Resume extraction schema — flat, CSV-friendly.
+# Field order here is the column order in the output CSV.
+#
+# Per-field knobs:
+#   type:        string | number
+#   required:    if true and missing, the row still writes but logs a warning
+#   multi:       pipe-separated list ("|"), e.g., "Cyient | Black & Veatch"
+#   aligned_with: another multi field — same length, same index correspondence
+#                 (e.g., degree[i] is the degree at college[i])
+#   grounded:    every value must appear verbatim (or normalized-variant) in source text
+#   pattern:     a named regex from validation.py (email | phone)
+#   range:       [min, max] for numeric fields
+#   description: passed to the LLM in the prompt — be specific, "current" vs "most recent"
+
+fields:
+  name:
+    column: Name
+    type: string
+    required: true
+    grounded: true
+    description: "Candidate's full name, exactly as written at the top of the resume. Do NOT invent — if the resume has no clear name line, return null."
+
+  phone:
+    column: Phone
+    type: string
+    grounded: true
+    pattern: phone
+    description: "Primary phone number. Preserve country code and spacing as written (e.g., '+91 96692 23345'). Pick the first one if multiple."
+
+  email:
+    column: Email
+    type: string
+    grounded: true
+    pattern: email
+    description: "Primary email address. Pick the first one if multiple. Must be a valid email format."
+
+  current_company:
+    column: Current Company
+    type: string
+    grounded: true
+    description: "MOST RECENTLY held employer, regardless of whether the role is ongoing or ended. Fill this even if the role has an end date — pick the one with the most recent dates (or 'Present'). Single value. This field should be null ONLY if the resume has no employment history at all."
+
+  current_role:
+    column: Current Role
+    type: string
+    grounded: true
+    description: "Job title at the most recently held employer (matches current_company). Single value. Same fill rule as current_company — fill it even if the role ended."
+
+  experience_years:
+    column: Experience
+    type: number
+    range: [0, 60]
+    description: "Total years of professional work experience. PREFER an explicitly stated number if the resume mentions one (e.g., '7 years experience', '5+ years'). OTHERWISE compute it by summing all employment date ranges, treating 'Present' as today. Include internships. Round to nearest integer (10 months → 1, 18 months → 2). Today's date is 2026-05-11."
+
+  key_skills:
+    column: Key Skills
+    type: string
+    grounded: false  # skills are paraphrased/normalized so verbatim is too strict
+    description: "Top technical skills / domain expertise. Comma-separated single string (e.g., 'Financial Modelling, Equity Research, Excel'). Pull from skills section first; supplement from job descriptions. 6-12 items max."
+
+  current_ctc:
+    column: Current CTC
+    type: string
+    grounded: true
+    description: "Current annual compensation if stated on the resume (e.g., '18 LPA', '$120k'). Most resumes do NOT state this — return null if absent. Do NOT estimate."
+
+  expected_ctc:
+    column: Expected CTC
+    type: string
+    grounded: true
+    description: "Expected annual compensation if stated on the resume. Almost always null. Do NOT estimate."
+
+  previous_companies:
+    column: Previous Companies
+    type: string
+    multi: true
+    grounded: true
+    description: "All employers EXCEPT the current one, most recent first, pipe-separated (e.g., 'Tata Power | Adani'). Empty string if the candidate has only ever had one job."
+
+  college_name:
+    column: College Name
+    type: string
+    multi: true
+    aligned_with: degree
+    grounded: true
+    description: "Institutions where degrees were earned, most recent first, pipe-separated (e.g., 'IIM Mumbai | NIT Trichy'). Index i here corresponds to index i in 'degree'."
+
+  degree:
+    column: Degree
+    type: string
+    multi: true
+    aligned_with: college_name
+    grounded: true
+    description: "Degrees earned, most recent first, pipe-separated (e.g., 'M.Tech | B.Tech EE'). Index i here corresponds to index i in 'college_name'."
