@@ -171,6 +171,77 @@ def _load_pdf_pymupdf(path: Path) -> str:
     return "\n".join(chunks)
 
 
+# ── PDF hyperlink annotation extraction ─────────────────────────────────────
+# Resumes show "GitHub" / "LinkedIn" / "Portfolio" as plain text, but the real
+# URL lives in the PDF's link-annotation layer (not in the text stream). This
+# helper pulls them out so the student pipeline can populate linkedinUrl and
+# per-project links[] downstream.
+
+def extract_pdf_hyperlinks(path: str | Path) -> list[dict]:
+    """Return every hyperlink in a PDF as a structured list.
+
+    Each item:
+        {
+          "url": "https://github.com/foo/bar",
+          "page": 0,
+          "bbox": [x0, y0, x1, y1],
+          "anchor_text": "GitHub",            # text visible inside the link rect
+          "context_text": "Tech: PyTorch ... |GitHub – Problem & data ...",  # text near
+        }
+
+    For non-PDF inputs (or PDFs with no links), returns an empty list.
+    """
+    p = Path(path)
+    if p.suffix.lower() != ".pdf":
+        return []
+    try:
+        import fitz  # pymupdf
+    except ImportError:
+        return []
+
+    out: list[dict] = []
+    doc = fitz.open(p)
+    try:
+        for page_num, page in enumerate(doc):
+            for link in page.get_links():
+                uri = link.get("uri")
+                if not uri:
+                    continue
+                rect = link.get("from")
+                if rect is None:
+                    continue
+                bbox = [rect.x0, rect.y0, rect.x1, rect.y1]
+                # Visible label inside the link rect (usually the anchor word).
+                try:
+                    anchor = page.get_textbox(rect).strip()
+                except Exception:
+                    anchor = ""
+                # Surrounding context — same horizontal band, ~30pt vertical
+                # padding above + below (roughly one line above and one line
+                # below the link). Tighter than first-cut ±80pt because at 80pt
+                # the header/publications section's profile links bled into
+                # the first project below them. 30pt keeps attribution local
+                # to the link's actual section.
+                ctx_rect = fitz.Rect(
+                    0, max(0, rect.y0 - 30),
+                    page.rect.width, min(page.rect.height, rect.y1 + 30),
+                )
+                try:
+                    context = page.get_textbox(ctx_rect).strip()
+                except Exception:
+                    context = ""
+                out.append({
+                    "url": uri,
+                    "page": page_num,
+                    "bbox": bbox,
+                    "anchor_text": anchor,
+                    "context_text": context,
+                })
+    finally:
+        doc.close()
+    return out
+
+
 # ── DOCX ────────────────────────────────────────────────────────────────────
 
 def _load_docx(path: Path) -> str:
