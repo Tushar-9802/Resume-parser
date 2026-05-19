@@ -45,6 +45,7 @@ _DEGREE_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\b(?:m\.?\s*tech|master\s+of\s+technology)\b", re.IGNORECASE), "mtech"),
     (re.compile(r"\b(?:b\.?\s*tech|bachelor\s+of\s+technology)\b", re.IGNORECASE), "btech"),
     (re.compile(r"\b(?:m\.?\s*c\.?\s*a)\b", re.IGNORECASE), "mca"),
+    (re.compile(r"\b(?:b\.?\s*c\.?\s*a|bachelor\s+of\s+computer\s+applications?)\b", re.IGNORECASE), "bca"),
     (re.compile(r"\b(?:m\.?\s*b\.?\s*a|master\s+of\s+business)\b", re.IGNORECASE), "mba"),
     (re.compile(r"\b(?:m\.?\s*sc|master\s+of\s+science)\b", re.IGNORECASE), "other"),
     (re.compile(r"\b(?:b\.?\s*sc|bachelor\s+of\s+science)\b", re.IGNORECASE), "bsc"),
@@ -294,7 +295,7 @@ def parse_cgpa(cgpa_text: str | None) -> tuple[float | None, str | None]:
 # Default program durations (years from start to graduation) — used when the
 # resume has a 'Present' end date and we need to project the graduation year.
 _DEFAULT_DURATIONS = {
-    "btech": 4, "be": 4, "bsc": 3, "bba": 3,
+    "btech": 4, "be": 4, "bsc": 3, "bba": 3, "bca": 3,
     "mtech": 2, "mba": 2, "mca": 2,
     "diploma": 3, "other": 4,
 }
@@ -707,6 +708,110 @@ def _clean_state(state: str | None) -> str | None:
 
 # ── Internship flattening to prose ──────────────────────────────────────────
 
+def _duration_months(start_raw: str | None, end_raw: str | None, is_in_progress: bool) -> int | None:
+    """Months between start and end. None when either side unparseable.
+    For in-progress entries, computes start → today (TODAY_YEAR)."""
+    s = parse_date(start_raw) if start_raw else None
+    if not s:
+        return None
+    if is_in_progress:
+        # As-of TODAY (2026 calendar year). Imprecise but useful.
+        e = (TODAY_YEAR, 12)  # rough — assume mid-year cap
+        # Use current month instead if available
+        import datetime as _dt
+        today = _dt.date.today()
+        e = (today.year, today.month)
+    else:
+        e = parse_date(end_raw) if end_raw else None
+        if not e:
+            return None
+    months = (e[0] - s[0]) * 12 + (e[1] - s[1]) + 1
+    return max(months, 0) if months is not None else None
+
+
+def derive_internships(entries: list[dict], known_skills: list[str], known_tools: list[str]) -> list[dict]:
+    """Turn internship_entries into structured records — parallel shape to derive_projects.
+
+    Each output:
+      {company, role, location, startMonth, startYear, endMonth, endYear,
+       isInProgress, durationMonths, description_condensed, skillsUsed, evidence}
+
+    description_condensed is the LLM's losslessly-condensed paragraph; if absent
+    or empty, falls back to joined achievements (no lossy compression). skillsUsed
+    uses same priority order as projects (LLM-attributed → candidate-kit intersection).
+    """
+    candidate_kit = {_norm_skill(s) for s in (known_skills + known_tools) if s}
+    candidate_kit_originals = {_norm_skill(s): s for s in (known_skills + known_tools) if s}
+    out: list[dict] = []
+
+    for e in entries or []:
+        company = (e.get("company") or "").strip()
+        role = (e.get("role") or "").strip()
+        if not (company or role):
+            continue
+
+        condensed = (e.get("description_condensed") or "").strip()
+        achievements = e.get("achievements") or []
+        if not condensed and achievements:
+            # No LLM-condensed text — concatenate verbatim bullets (lossless by construction).
+            condensed = " ".join(
+                a.strip() for a in achievements if isinstance(a, str) and a.strip()
+            )
+
+        evidence = (e.get("evidence") or "").strip()
+
+        # skillsUsed — LLM-attributed (filtered against candidate kit), else
+        # description intersection against the kit.
+        skills_used: list[str] = []
+        llm_attributed = e.get("skills_used") or []
+        for raw in llm_attributed:
+            if not isinstance(raw, str):
+                continue
+            key = _norm_skill(raw)
+            if key and key in candidate_kit and candidate_kit_originals[key] not in skills_used:
+                skills_used.append(candidate_kit_originals[key])
+        if not skills_used and condensed:
+            cond_lower = condensed.lower()
+            for key in sorted(candidate_kit, key=len, reverse=True):
+                if key and re.search(rf'\b{re.escape(key)}\b', cond_lower):
+                    cand = candidate_kit_originals[key]
+                    if cand not in skills_used:
+                        skills_used.append(cand)
+
+        # Date parsing — mirrors _project_dates.
+        start_raw = e.get("start")
+        end_raw = e.get("end")
+        start = parse_date(start_raw) if start_raw else None
+        end = parse_date(end_raw) if end_raw else None
+        is_in_progress = bool(
+            end_raw and re.search(r'\b(?:present|current|ongoing|now)\b', str(end_raw), re.IGNORECASE)
+        )
+        if is_in_progress:
+            end = None
+        duration = _duration_months(start_raw, end_raw, is_in_progress)
+
+        # Lossless audit — warn (don't drop) when metrics from evidence vanish.
+        lost = _condensation_lost_metrics(evidence, condensed)
+        if lost:
+            print(f"[student_derive] internship metric drop: {company!r} role={role!r}  lost={lost}")
+
+        out.append({
+            "company": company or None,
+            "role": role or None,
+            "location": (e.get("location") or "").strip() or None,
+            "startMonth": start[1] if start else None,
+            "startYear": start[0] if start else None,
+            "endMonth": end[1] if end else None,
+            "endYear": end[0] if end else None,
+            "isInProgress": is_in_progress,
+            "durationMonths": duration,
+            "description_condensed": condensed or None,
+            "skillsUsed": skills_used,
+            "evidence": evidence or None,
+        })
+    return out
+
+
 def flatten_internships(entries: list[dict]) -> str | None:
     """Concatenate internship entries into the single text blob Pulse stores.
 
@@ -765,7 +870,7 @@ def flatten_internships(entries: list[dict]) -> str | None:
 # and spacing, so we route through map_degree first.
 _DEGREE_RANK = {
     "mtech": 4, "mba": 4, "mca": 4,
-    "btech": 3, "be": 3, "bsc": 3,
+    "btech": 3, "be": 3, "bsc": 3, "bca": 3,
     "diploma": 2,
     "other": 1,
 }
@@ -927,6 +1032,39 @@ def resolve_hyperlinks(
     return (linkedin_url, portfolio_url, projects)
 
 
+def _label_to_url(label: str | None, kind: str) -> str | None:
+    """Promote an identity-pass label string to a URL when it already IS one.
+
+    The identity LLM is asked for the "literal text shown for the link" — which
+    is sometimes a plain anchor ('LinkedIn', 'GitHub', 'Portfolio') and
+    sometimes the URL itself printed in the resume body. PDF link annotations
+    are the primary URL source via resolve_hyperlinks(); this is the fallback
+    for resumes that print the URL inline without an annotation.
+
+    Returns the canonicalized URL when the label parses as one for the given
+    `kind` ('linkedin' | 'portfolio'), else None. Bare anchor text ('LinkedIn')
+    returns None so we don't promote a non-URL into the slot."""
+    if not label or not isinstance(label, str):
+        return None
+    s = label.strip()
+    if not s:
+        return None
+    # Bare domain like 'linkedin.com/in/foo' — prepend scheme so the domain
+    # regexes (which expect http(s)://) match.
+    if not re.match(r"^https?://", s, re.IGNORECASE):
+        if re.match(r"^(?:[\w-]+\.)+[a-z]{2,}/", s, re.IGNORECASE):
+            s = "https://" + s
+        else:
+            return None
+    if kind == "linkedin" and _LINKEDIN_DOMAIN.match(s):
+        return s
+    if kind == "portfolio" and (
+        _GITHUB_DOMAIN.match(s) or _HF_DOMAIN.match(s) or _KAGGLE_DOMAIN.match(s)
+    ):
+        return s
+    return None
+
+
 def _infer_label_from_url(url: str) -> str:
     if _GITHUB_DOMAIN.match(url):
         return "GitHub"
@@ -1030,7 +1168,18 @@ def derive_student_record(
         hyperlinks, derived_projects, identity,
     )
 
-    # Internships flattened to prose
+    # URL text-fallback: resumes that print the URL inline (e.g.
+    # 'linkedin.com/in/aksahprogrammer') without a PDF link annotation are lost
+    # by resolve_hyperlinks alone — the identity pass captures the visible text
+    # as linkedin_label / portfolio_label, so promote it when annotations
+    # didn't yield a URL of that kind.
+    if linkedin_url is None:
+        linkedin_url = _label_to_url(identity.get("linkedin_label"), "linkedin")
+    if portfolio_url is None:
+        portfolio_url = _label_to_url(identity.get("portfolio_label"), "portfolio")
+
+    # Internships — both structured array (new) and flat string (back-compat).
+    derived_internships = derive_internships(internships, known_skills=skills, known_tools=tools_used)
     internship_details = flatten_internships(internships)
 
     return {
@@ -1059,7 +1208,8 @@ def derive_student_record(
         "languagesKnown": languages,
 
         # Experience & projects
-        "internshipDetails": internship_details,
+        "internshipDetails": internship_details,  # flat string — back-compat with Pulse table
+        "internships": derived_internships,        # structured array — recruiter-portal-shaped
         "projects": derived_projects,
 
         # Career preferences

@@ -16,6 +16,7 @@ from src.student_derive import (
     map_branch,
     parse_cgpa,
     parse_graduation_year,
+    pick_primary_education,
     split_skills_and_tools,
     flatten_internships,
     _clean_state,
@@ -23,6 +24,7 @@ from src.student_derive import (
     _parse_tech_stack,
     _condensation_lost_metrics,
     _attribute_link_to_project,
+    _label_to_url,
     resolve_hyperlinks,
 )
 
@@ -40,6 +42,11 @@ class TestMapDegree:
         ("Master of Technology", "mtech"),
         ("MCA", "mca"),
         ("M.C.A.", "mca"),
+        ("BCA", "bca"),
+        ("B.C.A.", "bca"),
+        ("B C A", "bca"),
+        ("Bachelor of Computer Applications", "bca"),
+        ("Bachelor of Computer Application", "bca"),
         ("MBA", "mba"),
         ("M.B.A. (Marketing)", "mba"),
         ("Master of Business Administration", "mba"),
@@ -500,3 +507,94 @@ class TestResolveHyperlinks:
         li, pf, p = resolve_hyperlinks(None, projects, {})
         assert li is None and pf is None
         assert p == projects
+
+
+# ── pick_primary_education ──────────────────────────────────────────────────
+
+class TestPickPrimaryEducation:
+    def test_bca_with_12th_picked_as_primary(self):
+        # ashok_kumar_sah's case: BCA from a university + 12th PCM. Before the
+        # BCA enum addition both ranked 0 -> pick returned None -> picker null'd
+        # degree/branch/cgpa/graduationYear on a candidate who clearly has a
+        # university degree.
+        entries = [
+            {"raw_degree": "BCA", "graduation_year_text": "2016-2019"},
+            {"raw_degree": "12th PCM", "graduation_year_text": "2013-2015"},
+        ]
+        top = pick_primary_education(entries)
+        assert top is not None
+        assert top["raw_degree"] == "BCA"
+
+    def test_btech_beats_12th(self):
+        entries = [
+            {"raw_degree": "12th CBSE", "graduation_year_text": "2018"},
+            {"raw_degree": "B.Tech CSE", "graduation_year_text": "2022"},
+        ]
+        top = pick_primary_education(entries)
+        assert top["raw_degree"] == "B.Tech CSE"
+
+    def test_mtech_beats_btech(self):
+        # PG should outrank UG even if UG is more recent
+        entries = [
+            {"raw_degree": "B.Tech CSE", "graduation_year_text": "2020"},
+            {"raw_degree": "M.Tech CSE", "graduation_year_text": "2022"},
+        ]
+        top = pick_primary_education(entries)
+        assert top["raw_degree"] == "M.Tech CSE"
+
+    def test_only_school_entries_returns_none(self):
+        # No real degree -> None so caller knows the candidate has no
+        # recognized higher education entry
+        entries = [
+            {"raw_degree": "12th CBSE", "graduation_year_text": "2018"},
+            {"raw_degree": "10th SSC", "graduation_year_text": "2016"},
+        ]
+        assert pick_primary_education(entries) is None
+
+    def test_empty_returns_none(self):
+        assert pick_primary_education([]) is None
+        assert pick_primary_education(None) is None
+
+
+# ── _label_to_url ───────────────────────────────────────────────────────────
+
+class TestLabelToUrl:
+    def test_full_linkedin_url_passes(self):
+        # ashok's case: identity LLM captured the URL printed in the resume
+        # body as linkedin_label. Promote it when PDF annotations missed it.
+        url = "https://www.linkedin.com/in/aksahprogrammer/"
+        assert _label_to_url(url, "linkedin") == url
+
+    def test_bare_linkedin_domain_gets_scheme(self):
+        # Resume prints 'linkedin.com/in/foo' without https:// prefix
+        result = _label_to_url("linkedin.com/in/foo", "linkedin")
+        assert result == "https://linkedin.com/in/foo"
+
+    def test_github_as_portfolio_passes(self):
+        url = "https://github.com/saivighnesh2190"
+        assert _label_to_url(url, "portfolio") == url
+
+    def test_github_io_as_portfolio_passes(self):
+        # Vighnesh case: github.io is portfolio, not project repo
+        url = "https://saivighnesh2190.github.io/portfolio/"
+        assert _label_to_url(url, "portfolio") == url
+
+    def test_plain_anchor_text_rejected(self):
+        # Bare 'LinkedIn' / 'GitHub' / 'Portfolio' is not a URL — don't promote
+        assert _label_to_url("LinkedIn", "linkedin") is None
+        assert _label_to_url("GitHub", "portfolio") is None
+        assert _label_to_url("Portfolio", "portfolio") is None
+
+    def test_wrong_kind_rejected(self):
+        # GitHub URL passed as linkedin kind should not match
+        assert _label_to_url("https://github.com/foo", "linkedin") is None
+        # LinkedIn URL passed as portfolio should not match
+        assert _label_to_url("https://linkedin.com/in/foo", "portfolio") is None
+
+    def test_empty_and_none(self):
+        assert _label_to_url(None, "linkedin") is None
+        assert _label_to_url("", "linkedin") is None
+        assert _label_to_url("   ", "linkedin") is None
+
+    def test_non_string_returns_none(self):
+        assert _label_to_url(123, "linkedin") is None  # type: ignore[arg-type]

@@ -118,10 +118,17 @@ ENTITIES_SYSTEM_PROMPT = (
     "heading.\n"
     "2. INTERNSHIPS — every internship / industry role / part-time job. The "
     "'company' is the ORGANIZATION the candidate worked for (usually on a "
-    "title line like 'Product Intern - Bosscoder Academy'). Bullet points are "
-    "achievement strings — keep them verbatim, do not paraphrase, do not "
-    "summarize. The downstream pipeline concatenates them into the final "
-    "internshipDetails text.\n"
+    "title line like 'Product Intern - Bosscoder Academy'). For each internship:\n"
+    "   - 'achievements': bullet points kept VERBATIM (do not paraphrase). The "
+    "downstream verifier compares these to description_condensed.\n"
+    "   - 'description_condensed': one tight paragraph (<=400 chars) that "
+    "LOSSLESSLY preserves every metric (percentages, sample counts, scale "
+    "numbers), every named technology, every distinct contribution. Drop only "
+    "verbose framing words. Do not merge distinct claims. If you cannot fit "
+    "losslessly in 400 chars, prefer length over loss.\n"
+    "   - 'skills_used': 3-8 skills the candidate used in THIS internship. "
+    "Same rules as projects — pull from bullets + project type + candidate "
+    "kit; do NOT invent technologies the candidate doesn't mention anywhere.\n"
     "3. PROJECTS — every project the candidate worked on. CRITICAL for "
     "freshers (this is most of what they have to show). For each project:\n"
     "   - 'title': the project name as written.\n"
@@ -194,6 +201,8 @@ Return JSON with EXACTLY this shape:
         "verbatim bullet point 1",
         "verbatim bullet point 2"
       ],
+      "description_condensed": "one losslessly-condensed paragraph (see system rules)",
+      "skills_used": ["skill or tool used in this internship", "..."],
       "evidence": "the title/company/date line"
     }}
   ],
@@ -257,7 +266,12 @@ def extract_entities(text: str, model: str, sections: dict | None = None) -> dic
     derive layer simple)."""
     section_blocks = _build_section_blocks(sections)
     user = ENTITIES_USER_TEMPLATE.format(section_blocks=section_blocks, full_text=text)
-    parsed, elapsed = run_ollama(model, ENTITIES_SYSTEM_PROMPT, user, num_ctx=8192)
+    # Long senior resumes (e.g. avik's 9-page CV ~17K chars) overflow the
+    # 8192-token default — Ollama silently truncates the tail and the LLM
+    # returns empty arrays. 16384 fits ~50K-char resumes safely on the 5070
+    # Ti / Gemma 4 q4 (KV cache cost ~26 MB vs 13 MB at 8K, negligible vs the
+    # 9.6 GB model weight).
+    parsed, elapsed = run_ollama(model, ENTITIES_SYSTEM_PROMPT, user, num_ctx=16384)
     print(f"[student_extractor] entities pass: {elapsed:.1f}s")
     if not parsed:
         return _empty_entities()
