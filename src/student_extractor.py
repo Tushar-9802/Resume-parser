@@ -133,6 +133,10 @@ ENTITIES_SYSTEM_PROMPT = (
     "freshers (this is most of what they have to show). For each project:\n"
     "   - 'title': the project name as written.\n"
     "   - 'tech_stack_text': verbatim 'Tech: ...' line if present, else null.\n"
+    "   - 'bullets': EVERY distinct accomplishment / description line for this "
+    "project, kept VERBATIM as a list — one list item per resume line. Do NOT "
+    "drop, merge, summarize, or paraphrase any line. This is the authoritative "
+    "project content; completeness matters more than brevity.\n"
     "   - 'description_condensed': one tight paragraph (<=500 chars) that "
     "LOSSLESSLY preserves every metric (percentages, sample counts, model "
     "names, scale numbers), every named technology, every scope statement, "
@@ -212,6 +216,7 @@ Return JSON with EXACTLY this shape:
       "tech_stack_text": "verbatim 'Tech: ...' line if present, else null",
       "start": "date string if printed for this project, else null",
       "end": "date string if printed for this project, else null",
+      "bullets": ["verbatim accomplishment/description line 1", "verbatim line 2"],
       "description_condensed": "one losslessly-condensed paragraph (see system rules)",
       "skills_used": ["skill or tool used in this specific project", "..."],
       "evidence": "verbatim bullet(s) from the resume for this project"

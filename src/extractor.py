@@ -146,8 +146,14 @@ def _build_section_blocks(sections: dict[str, str] | None) -> str:
 
 # ── Ollama call ─────────────────────────────────────────────────────────────
 
-def _run_ollama(model: str, system: str, user: str, *, num_ctx: int = 8192) -> tuple[dict | None, float]:
-    """One Ollama call with format=json. Returns (parsed_dict, elapsed_seconds)."""
+def _run_ollama(model: str, system: str, user: str, *, num_ctx: int = 8192,
+                num_predict: int = -1) -> tuple[dict | None, float]:
+    """One Ollama call with format=json. Returns (parsed_dict, elapsed_seconds).
+
+    num_predict caps output tokens (-1 = unlimited). A cap is a cheap safety
+    net: a confused prompt can send a small model into an unbounded JSON
+    generation loop (observed: a 292K-char unterminated response that ran for
+    ~30 min). Bounded-output passes should pass an explicit cap."""
     import ollama
 
     t0 = time.time()
@@ -158,7 +164,8 @@ def _run_ollama(model: str, system: str, user: str, *, num_ctx: int = 8192) -> t
             {"role": "user", "content": user},
         ],
         format="json",
-        options={"temperature": 0.1, "num_ctx": num_ctx, "num_gpu": 999},
+        options={"temperature": 0.1, "num_ctx": num_ctx, "num_gpu": 999,
+                 "num_predict": num_predict},
         keep_alive="10m",
     )
     elapsed = time.time() - t0
@@ -201,7 +208,10 @@ def extract_entities(text: str, model: str, sections: dict[str, str] | None = No
     downstream code simple)."""
     section_blocks = _build_section_blocks(sections)
     user = ENTITIES_USER_TEMPLATE.format(section_blocks=section_blocks, full_text=text)
-    parsed, elapsed = _run_ollama(model, ENTITIES_SYSTEM_PROMPT, user, num_ctx=8192)
+    # 8192 silently truncates the tail of long multi-page CVs (Ollama drops
+    # overflow tokens) — the model then returns empty arrays. 16384 fits
+    # ~50K-char resumes; KV-cache cost is negligible vs the model weight.
+    parsed, elapsed = _run_ollama(model, ENTITIES_SYSTEM_PROMPT, user, num_ctx=16384)
     print(f"[extractor] entities pass: {elapsed:.1f}s")
     if not parsed:
         return {"employment_entries": [], "education_entries": [], "skills_raw": []}

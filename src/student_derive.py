@@ -559,6 +559,11 @@ def derive_projects(entries: list[dict], known_skills: list[str], known_tools: l
         if not title:
             continue
         description = (e.get("description_condensed") or "").strip()
+        bullets = [b.strip() for b in (e.get("bullets") or [])
+                   if isinstance(b, str) and b.strip()]
+        if bullets:
+            # Verbatim bullets, one per line — lossless, scannable, not a blob.
+            description = "\n".join(f"• {b}" for b in bullets)
         evidence = (e.get("evidence") or "").strip()
 
         # 1. tech_stack — best signal, copy verbatim
@@ -751,12 +756,15 @@ def derive_internships(entries: list[dict], known_skills: list[str], known_tools
             continue
 
         condensed = (e.get("description_condensed") or "").strip()
-        achievements = e.get("achievements") or []
-        if not condensed and achievements:
-            # No LLM-condensed text — concatenate verbatim bullets (lossless by construction).
-            condensed = " ".join(
-                a.strip() for a in achievements if isinstance(a, str) and a.strip()
-            )
+        achievements = [a.strip() for a in (e.get("achievements") or [])
+                        if isinstance(a, str) and a.strip()]
+        if achievements:
+            # Verbatim bullets, one per line — lossless and scannable, never a
+            # paragraph blob. The LLM's free-form condensed paragraph is not
+            # trusted (it silently merges/drops bullets); the verbatim bullet
+            # list is authoritative. Falls back to the condensed text only when
+            # the model returned no bullet list at all.
+            condensed = "\n".join(f"• {a}" for a in achievements)
 
         evidence = (e.get("evidence") or "").strip()
 

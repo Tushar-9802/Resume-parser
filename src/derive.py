@@ -80,8 +80,8 @@ def parse_date(s) -> tuple[int, int] | None:
         if 1 <= mo <= 12:
             return (y, mo)
 
-    # MonthName YYYY  or  Mon'YY
-    m = re.match(r"^([a-z]+)\s*[\s'`]?\s*(\d{2,4})$", s)
+    # MonthName YYYY / Mon'YY / MonthName-YYYY / "December,2024" / "June2025"
+    m = re.match(r"^([a-z]+)\s*[\s'`,-]?\s*(\d{2,4})$", s)
     if m:
         month_word, year_str = m.group(1), m.group(2)
         mo = _MONTHS.get(month_word)
